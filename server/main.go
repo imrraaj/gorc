@@ -22,23 +22,22 @@ type Message struct {
 	Conn            net.Conn
 }
 
-func ParseMessageFromBuffer(Conn net.Conn, buf string) (Message, error) {
+func ParseMessageFromBuffer(conn net.Conn, buf string) (Message, error) {
 	values := strings.Split(buf, "\r\n")
 	if len(values) < 3 {
 		return Message{}, fmt.Errorf("invalid message format")
 	}
 	switch values[0] {
 	case "MESSAGE":
-		return Message{Type: MESSAGE, Nickname: values[1], Text: values[2], Conn: Conn, originalMessage: buf}, nil
+		return Message{Type: MESSAGE, Nickname: values[1], Text: values[2], Conn: conn, originalMessage: buf}, nil
 	case "WHISPER":
 		if len(values) < 4 {
 			return Message{}, fmt.Errorf("invalid whisper message format")
 		}
-		return Message{Type: WHISPER, WhisperTo: values[1], Nickname: values[2], Text: values[3], Conn: Conn, originalMessage: buf}, nil
+		return Message{Type: WHISPER, WhisperTo: values[1], Nickname: values[2], Text: values[3], Conn: conn, originalMessage: buf}, nil
 	default:
 		return Message{}, fmt.Errorf("invalid message type")
 	}
-
 }
 
 type Server struct {
@@ -71,13 +70,13 @@ func (s *Server) ListenAndBroadcast() {
 
 func (s *Server) handleClientConnection(conn net.Conn) {
 	initialBuf := make([]byte, 1024)
-	_, err := conn.Read(initialBuf)
-	if err != nil {
+	n, err := conn.Read(initialBuf)
+	if err != nil || n == 0 {
 		log.Println("Could not read the nickname")
 		conn.Close()
 		return
 	}
-	m, err := ParseMessageFromBuffer(conn, string(initialBuf))
+	m, err := ParseMessageFromBuffer(conn, string(initialBuf[:n]))
 	if err != nil {
 		log.Println("Could not parse the message")
 		conn.Close()
@@ -94,7 +93,7 @@ func (s *Server) handleClientConnection(conn net.Conn) {
 	s.mutex.Lock()
 	s.connections[nickname] = conn
 	s.mutex.Unlock()
-	// s.BroadcastMessage(fmt.Sprintf("New user connected: %s\n", nickname))
+	s.BroadcastMessage(fmt.Sprintf("New user connected: %s\n", nickname))
 
 	buffer := make([]byte, 1024)
 	for {
@@ -102,13 +101,13 @@ func (s *Server) handleClientConnection(conn net.Conn) {
 		if err != nil || n == 0 {
 			log.Println("Someone disconnected")
 			s.mutex.Lock()
-			delete(s.connections, conn.RemoteAddr().String())
+			delete(s.connections, nickname)
 			s.mutex.Unlock()
-			// go s.BroadcastMessage("Somebody disconnected")
+			go s.BroadcastMessage(fmt.Sprintf("User disconnected: %s\n", nickname))
 			conn.Close()
 			break
 		}
-		m, err := ParseMessageFromBuffer(conn, string(buffer))
+		m, err := ParseMessageFromBuffer(conn, string(buffer[:n]))
 		if err != nil {
 			log.Println("Could not parse the message")
 			continue
@@ -116,7 +115,7 @@ func (s *Server) handleClientConnection(conn net.Conn) {
 		if m.Type == WHISPER {
 			s.mutex.Lock()
 			if c, ok := s.connections[m.WhisperTo]; ok {
-				c.Write(buffer)
+				c.Write([]byte(m.originalMessage))
 			}
 			s.mutex.Unlock()
 			continue
