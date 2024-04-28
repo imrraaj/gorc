@@ -4,46 +4,15 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"strings"
 	"sync"
+
+	common "github.com/imrraaj/gorc/common"
 )
-
-const (
-	MESSAGE = iota
-	WHISPER
-)
-
-type Message struct {
-	originalMessage string
-	Type            int
-	Nickname        string
-	WhisperTo       string
-	Text            string
-	Conn            net.Conn
-}
-
-func ParseMessageFromBuffer(conn net.Conn, buf string) (Message, error) {
-	values := strings.Split(buf, "\r\n")
-	if len(values) < 3 {
-		return Message{}, fmt.Errorf("invalid message format")
-	}
-	switch values[0] {
-	case "MESSAGE":
-		return Message{Type: MESSAGE, Nickname: values[1], Text: values[2], Conn: conn, originalMessage: buf}, nil
-	case "WHISPER":
-		if len(values) < 4 {
-			return Message{}, fmt.Errorf("invalid whisper message format")
-		}
-		return Message{Type: WHISPER, WhisperTo: values[1], Nickname: values[2], Text: values[3], Conn: conn, originalMessage: buf}, nil
-	default:
-		return Message{}, fmt.Errorf("invalid message type")
-	}
-}
 
 type Server struct {
 	Port        string
 	connections map[string]net.Conn
-	messages    chan Message
+	messages    chan common.Message
 	mutex       sync.Mutex
 }
 
@@ -76,13 +45,13 @@ func (s *Server) handleClientConnection(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	m, err := ParseMessageFromBuffer(conn, string(initialBuf[:n]))
+	m, err := common.ParseMessageFromBuffer(conn, string(initialBuf[:n]))
 	if err != nil {
 		log.Println("Could not parse the message")
 		conn.Close()
 		return
 	}
-	if m.Type != MESSAGE {
+	if m.Type != common.MESSAGE {
 		log.Println("Invalid message type")
 		conn.Close()
 		return
@@ -107,12 +76,12 @@ func (s *Server) handleClientConnection(conn net.Conn) {
 			conn.Close()
 			break
 		}
-		m, err := ParseMessageFromBuffer(conn, string(buffer[:n]))
+		m, err := common.ParseMessageFromBuffer(conn, string(buffer[:n]))
 		if err != nil {
 			log.Println("Could not parse the message")
 			continue
 		}
-		if m.Type == WHISPER {
+		if m.Type == common.WHISPER {
 			s.mutex.Lock()
 			if c, ok := s.connections[m.WhisperTo]; ok {
 				c.Write([]byte(m.originalMessage))
@@ -129,7 +98,7 @@ func main() {
 	server := Server{
 		Port:        "6969",
 		connections: make(map[string]net.Conn),
-		messages:    make(chan Message),
+		messages:    make(chan common.Message),
 	}
 
 	ln, err := net.Listen("tcp", ":"+server.Port)
